@@ -385,8 +385,19 @@ function ProfitKalkulator() {
 
     let totalRevenue = 0;
     let totalCost = 0;
-    let totalShipping = Object.keys(orderGroups).length * 2500;
     const productStats = {};
+    
+    // === SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ (MÓDOSÍTVA) ===
+    let totalShipping = 0;
+    Object.values(orderGroups).forEach(orderItems => {
+        const orderTotalValue = orderItems.reduce((sum, item) => sum + (item.itemCost * item.quantity), 0);
+        if (orderTotalValue < 14000) {
+            totalShipping += (2500 - 1490); // Vevő fizet, a mi költségünk csökken
+        } else {
+            totalShipping += 2500; // Ingyenes szállítás, a mi költségünk a teljes összeg
+        }
+    });
+    // === SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ VÉGE ===
 
     orders.forEach(order => {
       const prices = priceData[order.itemName];
@@ -440,15 +451,6 @@ function ProfitKalkulator() {
     let totalRevenue = 0;
     let totalCost = 0;
 
-    orders.forEach(order => {
-      const prices = priceData[order.itemName];
-      if (!prices) return;
-
-      const newPrice = Math.round(prices.eladasi_ar * (1 + globalMarkup / 100));
-      totalRevenue += newPrice * order.quantity;
-      totalCost += prices.beszerzesi_ar * order.quantity;
-    });
-
     const orderGroups = {};
     orders.forEach(order => {
       if (!orderGroups[order.orderNumber]) {
@@ -456,7 +458,34 @@ function ProfitKalkulator() {
       }
       orderGroups[order.orderNumber].push(order);
     });
-    const totalShipping = Object.keys(orderGroups).length * 2500;
+    
+    // === WHAT-IF SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ (MÓDOSÍTVA) ===
+    let totalShipping = 0;
+    Object.values(orderGroups).forEach(orderItems => {
+        const orderTotalValue = orderItems.reduce((sum, item) => {
+            const prices = priceData[item.itemName];
+            if (!prices) return sum;
+            // A "what-if" árral számolunk az értékhatárhoz
+            const newPrice = Math.round(productPrices[item.itemName].eladasi_ar * (1 + globalMarkup / 100));
+            return sum + (newPrice * item.quantity);
+        }, 0);
+
+        if (orderTotalValue < 14000) {
+            totalShipping += (2500 - 1490);
+        } else {
+            totalShipping += 2500;
+        }
+    });
+    // === WHAT-IF SZÁLLÍTÁSI KÖLTSÉG VÉGE ===
+
+    orders.forEach(order => {
+        const prices = priceData[order.itemName];
+        if (!prices) return;
+  
+        const newPrice = Math.round(productPrices[order.itemName].eladasi_ar * (1 + globalMarkup / 100));
+        totalRevenue += newPrice * order.quantity;
+        totalCost += prices.beszerzesi_ar * order.quantity;
+      });
 
     return totalRevenue - totalCost - totalShipping;
   }, [orders, productPrices, globalMarkup]);
@@ -729,7 +758,7 @@ function ProfitKalkulator() {
                 {profitData.totalProfit.toLocaleString()} Ft
               </p>
               <p className="text-xs text-gray-500 mt-1">
-                Marázs: {profitData.profitMargin}%
+                Marzs: {profitData.profitMargin}%
               </p>
             </div>
 
@@ -757,12 +786,12 @@ function ProfitKalkulator() {
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Bevétel</th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Költség</th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Profit</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Marázs</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Marzs</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {sortedProducts.map(([name, stats]) => {
-                    const margin = ((stats.profit / stats.revenue) * 100).toFixed(1);
+                    const margin = stats.revenue > 0 ? ((stats.profit / stats.revenue) * 100).toFixed(1) : 0;
                     return (
                       <tr key={name} className="hover:bg-gray-50">
                         <td className="px-6 py-4 text-sm text-gray-800">{name}</td>
@@ -877,7 +906,7 @@ function ProfitKalkulator() {
                   {(whatIfProfitData - currentProfit) >= 0 ? '+' : ''}{(whatIfProfitData - currentProfit).toLocaleString()} Ft
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  {(((whatIfProfitData - currentProfit) / currentProfit) * 100).toFixed(1)}%
+                  {currentProfit !== 0 ? (((whatIfProfitData - currentProfit) / currentProfit) * 100).toFixed(1) : 'N/A'}%
                 </p>
               </div>
             </div>
