@@ -1,0 +1,20 @@
+[build]
+  publish = "."
+  command = "echo 'No build needed'"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+```
+
+---
+
+## **.gitignore**
+```
+node_modules/
+.DS_Store
+*.log
+.env
+.netlify/
+dist/
