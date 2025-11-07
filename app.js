@@ -301,7 +301,7 @@ function ProfitKalkulator() {
         itemName: row['Item Name'],
         quantity: row['Quantity (- Refund)'] || 0,
         itemCost: row['Item Cost'] || 0,
-        orderSubtotal: row['Order Subtotal Amount'] || 0, // ÚJ: Részösszeg beolvasása
+        orderSubtotal: row['Order Subtotal Amount'] || 0,
         orderDate: row['Order Date']
       })).filter(order => order.itemName && order.itemName !== '');
 
@@ -367,11 +367,9 @@ function ProfitKalkulator() {
 
     const priceData = { ...productPrices };
     
-    // Csoportosítás rendelési szám alapján
     const orderGroups = {};
     orders.forEach(order => {
       if (!orderGroups[order.orderNumber]) {
-        // Minden rendeléshez csak egyszer vesszük a részösszeget
         orderGroups[order.orderNumber] = {
             items: [],
             subtotal: order.orderSubtotal 
@@ -387,7 +385,6 @@ function ProfitKalkulator() {
     // === SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ (MÓDOSÍTVA) ===
     let totalShippingCost = 0;
     Object.values(orderGroups).forEach(group => {
-        // A csoportosított rendelés részösszegét használjuk
         if (group.subtotal < 14000) {
             totalShippingCost += (2500 - 1490);
         } else {
@@ -422,22 +419,24 @@ function ProfitKalkulator() {
     });
 
     const totalProfit = totalRevenue - totalCost - totalShippingCost;
+    const orderCount = Object.keys(orderGroups).length;
 
     return {
       totalRevenue,
       totalCost,
-      totalShipping: totalShippingCost, // Javítva
+      totalShipping: totalShippingCost,
       totalProfit,
-      orderCount: Object.keys(orderGroups).length,
+      orderCount,
       productStats,
-      profitMargin: totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(2) : 0
+      profitMargin: totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(2) : 0,
+      averageOrderValue: orderCount > 0 ? (totalRevenue / orderCount) : 0,
+      averageOrderProfit: orderCount > 0 ? (totalProfit / orderCount) : 0,
     };
-  }, [orders, productPrices]); // globalMarkup eltávolítva, mert a what-if kezeli
+  }, [orders, productPrices]);
 
-  const whatIfProfitData = useMemo(() => {
-    if (orders.length === 0 || globalMarkup === 0) return null;
-    
-    // Csoportosítás rendelési szám alapján
+  const whatIfDetailedData = useMemo(() => {
+    if (orders.length === 0 || !profitData) return null;
+
     const orderGroups = {};
     orders.forEach(order => {
         if (!orderGroups[order.orderNumber]) {
@@ -447,17 +446,14 @@ function ProfitKalkulator() {
     });
 
     let newTotalRevenue = 0;
-    let totalCost = 0;
     let newTotalShippingCost = 0;
 
-    // === WHAT-IF SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ (MÓDOSÍTVA) ===
+    // === WHAT-IF SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ ===
     Object.values(orderGroups).forEach(group => {
-        // Minden tétel árát újraszámoljuk a markup alapján
         const newOrderSubtotal = group.items.reduce((sum, item) => {
             const originalPrices = productPrices[item.itemName];
-            if (!originalPrices) return sum; // Ha nincs ár, nem számoljuk
+            if (!originalPrices) return sum;
             
-            // Az eredeti eladási árból számolunk, nem a kedvezményesből
             const newPrice = Math.round(originalPrices.eladasi_ar * (1 + globalMarkup / 100));
             return sum + (newPrice * item.quantity);
         }, 0);
@@ -470,18 +466,30 @@ function ProfitKalkulator() {
     });
     // === WHAT-IF SZÁLLÍTÁSI KÖLTSÉG VÉGE ===
 
-    orders.forEach(order => {
-        const prices = productPrices[order.itemName];
-        if (!prices) return;
-  
-        // Az új bevételt az eredeti eladási árból számoljuk, hogy a kuponok ne zavarjanak be
-        const newRevenue = Math.round(prices.eladasi_ar * (1 + globalMarkup / 100)) * order.quantity;
-        newTotalRevenue += newRevenue;
-        totalCost += prices.beszerzesi_ar * order.quantity;
+    const productBreakdown = Object.entries(profitData.productStats).map(([name, stats]) => {
+      const originalPrices = productPrices[name];
+      if (!originalPrices) return { name, originalProfit: stats.profit, newProfit: stats.profit };
+      
+      const newPrice = Math.round(originalPrices.eladasi_ar * (1 + globalMarkup / 100));
+      const newRevenue = newPrice * stats.quantity;
+      const newProfit = newRevenue - stats.cost;
+      
+      newTotalRevenue += newRevenue;
+      
+      return { name, originalProfit: stats.profit, newProfit };
     });
 
-    return newTotalRevenue - totalCost - newTotalShippingCost;
-  }, [orders, productPrices, globalMarkup]);
+    const newTotalProfit = newTotalRevenue - profitData.totalCost - newTotalShippingCost;
+
+    return { 
+      newTotalRevenue, 
+      totalCost: profitData.totalCost,
+      newTotalShippingCost, 
+      newTotalProfit,
+      productBreakdown
+    };
+  }, [orders, productPrices, globalMarkup, profitData]);
+  
 
   if (view === 'upload') {
     return (
@@ -756,12 +764,12 @@ function ProfitKalkulator() {
             </div>
 
             <div className="bg-white p-6 rounded-lg shadow">
-              <p className="text-sm text-gray-600 mb-1">Rendelések</p>
-              <p className="text-3xl font-bold text-blue-600">
-                {profitData.orderCount} db
+              <p className="text-sm text-gray-600 mb-1">Rendelések ({profitData.orderCount} db)</p>
+              <p className="text-xl font-bold text-blue-600">
+                Átl. érték: {profitData.averageOrderValue.toFixed(0).toLocaleString()} Ft
               </p>
-              <p className="text-xs text-gray-500 mt-1">
-                Átlag: {profitData.orderCount > 0 ? (profitData.totalProfit / profitData.orderCount).toFixed(0).toLocaleString() : 0} Ft/rendelés
+              <p className="text-xl font-bold text-green-600 mt-1">
+                Átl. profit: {profitData.averageOrderProfit.toFixed(0).toLocaleString()} Ft
               </p>
             </div>
           </div>
@@ -813,97 +821,111 @@ function ProfitKalkulator() {
     );
   }
 
-  if (view === 'whatif' && profitData) {
-    const currentProfit = profitData.totalProfit;
+  if (view === 'whatif' && whatIfDetailedData) {
+    const { 
+      newTotalRevenue, 
+      totalCost, 
+      newTotalShippingCost, 
+      newTotalProfit,
+      productBreakdown
+    } = whatIfDetailedData;
+
+    const sortedBreakdown = [...productBreakdown].sort((a, b) => {
+      const changeA = a.newProfit - a.originalProfit;
+      const changeB = b.newProfit - b.originalProfit;
+      return changeB - changeA;
+    });
 
     return (
       <div className="min-h-screen bg-gray-50 p-6">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-3xl font-bold text-gray-800">🔮 What-If Elemzés</h1>
             <button
               onClick={() => setView('dashboard')}
               className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition"
             >
-              ← Vissza
+              ← Vissza a Dashboardra
             </button>
           </div>
 
           <div className="bg-white rounded-lg shadow p-8 mb-6">
             <h2 className="text-xl font-bold text-gray-800 mb-4">Globális árváltoztatás</h2>
-            <p className="text-gray-600 mb-6">
-              Próbáld ki, hogyan változna a profitod ha MINDEN terméken változtatsz az árakon!
-            </p>
-
             <div className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Árváltozás (%): {globalMarkup > 0 ? '+' : ''}{globalMarkup}%
               </label>
               <input
-                type="range"
-                min="-50"
-                max="100"
-                step="5"
-                value={globalMarkup}
+                type="range" min="-50" max="100" step="5" value={globalMarkup}
                 onChange={(e) => setGlobalMarkup(parseInt(e.target.value))}
                 className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
               />
-              <div className="flex justify-between text-xs text-gray-500 mt-1">
-                <span>-50%</span>
-                <span>0%</span>
-                <span>+100%</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <button
-                onClick={() => setGlobalMarkup(-10)}
-                className="py-2 px-4 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition"
-              >
-                -10%
-              </button>
-              <button
-                onClick={() => setGlobalMarkup(0)}
-                className="py-2 px-4 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition"
-              >
-                Reset
-              </button>
-              <button
-                onClick={() => setGlobalMarkup(10)}
-                className="py-2 px-4 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition"
-              >
-                +10%
-              </button>
             </div>
           </div>
 
-          {whatIfProfitData !== null && globalMarkup !== 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white p-6 rounded-lg shadow">
-                <p className="text-sm text-gray-600 mb-1">Jelenlegi profit</p>
-                <p className="text-3xl font-bold text-gray-800">
-                  {currentProfit.toLocaleString()} Ft
-                </p>
-              </div>
-
-              <div className="bg-white p-6 rounded-lg shadow">
-                <p className="text-sm text-gray-600 mb-1">What-If profit</p>
-                <p className="text-3xl font-bold text-purple-600">
-                  {whatIfProfitData.toLocaleString()} Ft
-                </p>
-              </div>
-
-              <div className="bg-white p-6 rounded-lg shadow">
-                <p className="text-sm text-gray-600 mb-1">Változás</p>
-                <p className={`text-3xl font-bold ${(whatIfProfitData - currentProfit) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {(whatIfProfitData - currentProfit) >= 0 ? '+' : ''}{(whatIfProfitData - currentProfit).toLocaleString()} Ft
-                </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {currentProfit !== 0 ? (((whatIfProfitData - currentProfit) / Math.abs(currentProfit)) * 100).toFixed(1) : 'N/A'}%
-                </p>
-              </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            {/* Jelenlegi adatok */}
+            <div className="bg-white p-6 rounded-lg shadow">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Jelenlegi adatok</h3>
+                <div className="space-y-3 text-gray-700">
+                    <div className="flex justify-between"><span>Bevétel:</span> <span className="font-medium">{profitData.totalRevenue.toLocaleString()} Ft</span></div>
+                    <div className="flex justify-between"><span>Termék költség:</span> <span className="font-medium text-red-600">{profitData.totalCost.toLocaleString()} Ft</span></div>
+                    <div className="flex justify-between"><span>Szállítási költség:</span> <span className="font-medium text-red-600">{profitData.totalShipping.toLocaleString()} Ft</span></div>
+                    <hr/>
+                    <div className="flex justify-between text-xl"><strong>Nettó Profit:</strong> <strong className={profitData.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}>{profitData.totalProfit.toLocaleString()} Ft</strong></div>
+                </div>
             </div>
-          )}
+
+            {/* What-If adatok */}
+            <div className="bg-white p-6 rounded-lg shadow border-2 border-purple-400">
+                <h3 className="text-lg font-bold text-purple-700 mb-4">"What-If" szimuláció</h3>
+                <div className="space-y-3 text-gray-700">
+                    <div className="flex justify-between"><span>Bevétel:</span> <span className="font-medium">{newTotalRevenue.toLocaleString()} Ft</span></div>
+                    <div className="flex justify-between"><span>Termék költség:</span> <span className="font-medium text-red-600">{totalCost.toLocaleString()} Ft</span></div>
+                    <div className="flex justify-between"><span>Szállítási költség:</span> <span className="font-medium text-red-600">{newTotalShippingCost.toLocaleString()} Ft</span></div>
+                    <hr/>
+                    <div className="flex justify-between text-xl"><strong>Nettó Profit:</strong> <strong className={newTotalProfit >= 0 ? 'text-green-600' : 'text-red-600'}>{newTotalProfit.toLocaleString()} Ft</strong></div>
+                </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-800">Termékek profitjának változása</h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Termék</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Eredeti Profit</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Új Profit</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Változás (Ft)</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Változás (%)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {sortedBreakdown.map(item => {
+                      const change = item.newProfit - item.originalProfit;
+                      const percentChange = item.originalProfit !== 0 ? ((change / Math.abs(item.originalProfit)) * 100).toFixed(1) : (item.newProfit > 0 ? "∞" : "0.0");
+                      return (
+                          <tr key={item.name} className="hover:bg-gray-50">
+                              <td className="px-6 py-4 text-sm text-gray-800">{item.name}</td>
+                              <td className="px-6 py-4 text-sm text-right text-gray-600">{item.originalProfit.toLocaleString()} Ft</td>
+                              <td className={`px-6 py-4 text-sm text-right font-medium ${item.newProfit >= 0 ? 'text-purple-600' : 'text-red-600'}`}>{item.newProfit.toLocaleString()} Ft</td>
+                              <td className={`px-6 py-4 text-sm text-right font-medium ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {change >= 0 ? '+' : ''}{change.toLocaleString()} Ft
+                              </td>
+                              <td className={`px-6 py-4 text-sm text-right ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                {change >= 0 ? '+' : ''}{percentChange}%
+                              </td>
+                          </tr>
+                      );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
     );
