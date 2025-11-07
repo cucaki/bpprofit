@@ -474,7 +474,8 @@ function ProfitKalkulator() {
       }
 
       // ÚJ: Ellenőrzés - az itemCost valóban eladási ár-e?
-      const revenue = order.itemCost * order.quantity;
+      const revenue = prices.eladasi_ar * order.quantity;
+
       const cost = prices.beszerzesi_ar * order.quantity;
       
       // Ha az itemCost nagyon távol van az eladási ártól, figyelmeztetés
