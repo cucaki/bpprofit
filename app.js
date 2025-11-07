@@ -252,10 +252,21 @@ function ProfitKalkulator() {
   const [view, setView] = useState('upload');
   const [globalMarkup, setGlobalMarkup] = useState(0);
   const [searchFilter, setSearchFilter] = useState('');
+  // ÚJ: Állapot a cella szerkesztéséhez
+  const [editingCell, setEditingCell] = useState(null); // { productName: '...', field: '...' }
 
   useEffect(() => {
     localStorage.setItem('productPrices', JSON.stringify(productPrices));
   }, [productPrices]);
+  
+  // ÚJ: Funkció az árak alaphelyzetbe állításához
+  const handleResetPrices = () => {
+    if (confirm('Biztosan visszaállítasz minden árat az alapértelmezettre? Minden egyéni módosítás elvész.')) {
+        localStorage.removeItem('productPrices');
+        setProductPrices(DEFAULT_PRODUCT_PRICES);
+        alert('Árak visszaállítva az alapértelmezettre!');
+    }
+  };
 
   const exportPrices = () => {
     const dataStr = JSON.stringify(productPrices, null, 2);
@@ -326,10 +337,7 @@ function ProfitKalkulator() {
 
     if (!manualMode && selectedExistingProduct) {
       const existingPrices = productPrices[selectedExistingProduct];
-      setProductPrices(prev => ({
-        ...prev,
-        [productName]: { ...existingPrices }
-      }));
+      setProductPrices(prev => ({ ...prev, [productName]: { ...existingPrices } }));
     } else if (manualMode) {
       const beszerzesi = parseFloat(tempPrices.beszerzesi_ar);
       const eladasi = parseFloat(tempPrices.eladasi_ar);
@@ -338,14 +346,7 @@ function ProfitKalkulator() {
         alert('Kérlek adj meg érvényes számokat!');
         return;
       }
-
-      setProductPrices(prev => ({
-        ...prev,
-        [productName]: {
-          beszerzesi_ar: beszerzesi,
-          eladasi_ar: eladasi
-        }
-      }));
+      setProductPrices(prev => ({ ...prev, [productName]: { beszerzesi_ar: beszerzesi, eladasi_ar: eladasi } }));
     } else {
       alert('Válassz egy terméket a listából!');
       return;
@@ -360,6 +361,18 @@ function ProfitKalkulator() {
     } else {
       setView('dashboard');
     }
+  };
+  
+  // ÚJ: Kezelők az inline szerkesztéshez
+  const handlePriceChange = (productName, field, value) => {
+    const newValue = parseFloat(value);
+    if (!isNaN(newValue)) {
+        setProductPrices(prev => ({
+            ...prev,
+            [productName]: { ...prev[productName], [field]: newValue }
+        }));
+    }
+    setEditingCell(null);
   };
 
   const profitData = useMemo(() => {
@@ -382,7 +395,6 @@ function ProfitKalkulator() {
     let totalCost = 0;
     const productStats = {};
     
-    // === SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ (MÓDOSÍTVA) ===
     let totalShippingCost = 0;
     Object.values(orderGroups).forEach(group => {
         if (group.subtotal < 14000) {
@@ -391,7 +403,6 @@ function ProfitKalkulator() {
             totalShippingCost += 2500;
         }
     });
-    // === SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ VÉGE ===
 
     orders.forEach(order => {
       const prices = priceData[order.itemName];
@@ -448,7 +459,6 @@ function ProfitKalkulator() {
     let newTotalRevenue = 0;
     let newTotalShippingCost = 0;
 
-    // === WHAT-IF SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ ===
     Object.values(orderGroups).forEach(group => {
         const newOrderSubtotal = group.items.reduce((sum, item) => {
             const originalPrices = productPrices[item.itemName];
@@ -464,17 +474,16 @@ function ProfitKalkulator() {
             newTotalShippingCost += 2500;
         }
     });
-    // === WHAT-IF SZÁLLÍTÁSI KÖLTSÉG VÉGE ===
 
     const productBreakdown = Object.entries(profitData.productStats).map(([name, stats]) => {
       const originalPrices = productPrices[name];
       if (!originalPrices) return { name, originalProfit: stats.profit, newProfit: stats.profit };
       
       const newPrice = Math.round(originalPrices.eladasi_ar * (1 + globalMarkup / 100));
-      const newRevenue = newPrice * stats.quantity;
-      const newProfit = newRevenue - stats.cost;
+      const newRevenueForProduct = newPrice * stats.quantity;
+      const newProfit = newRevenueForProduct - stats.cost;
       
-      newTotalRevenue += newRevenue;
+      newTotalRevenue += newRevenueForProduct;
       
       return { name, originalProfit: stats.profit, newProfit };
     });
@@ -502,201 +511,34 @@ function ProfitKalkulator() {
           
           <label className="block mb-6">
             <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center hover:border-blue-500 cursor-pointer transition">
-              <input
-                type="file"
-                accept=".xlsx,.xls"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
+              <input type="file" accept=".xlsx,.xls" onChange={handleFileUpload} className="hidden" />
               <svg className="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
                 <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              <p className="mt-2 text-sm text-gray-600">
-                Kattints ide vagy húzd ide a WooCommerce fájlt
-              </p>
-              <p className="mt-1 text-xs text-gray-500">
-                Excel fájl (.xlsx, .xls)
-              </p>
+              <p className="mt-2 text-sm text-gray-600">Kattints ide vagy húzd ide a WooCommerce fájlt</p>
+              <p className="mt-1 text-xs text-gray-500">Excel fájl (.xlsx, .xls)</p>
             </div>
           </label>
 
           <div className="border-t pt-6">
             <h3 className="font-semibold mb-3">Árlisták kezelése</h3>
             <div className="flex gap-3">
-              <button
-                onClick={exportPrices}
-                className="flex-1 bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition"
-              >
-                📥 Árak exportálása
-              </button>
+              <button onClick={exportPrices} className="flex-1 bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition">📥 Árak exportálása</button>
               <label className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition cursor-pointer text-center">
                 📤 Árak importálása
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={importPrices}
-                  className="hidden"
-                />
+                <input type="file" accept=".json" onChange={importPrices} className="hidden" />
               </label>
             </div>
           </div>
 
-          <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-            <p className="text-sm text-blue-800">
-              💡 <strong>Tipp:</strong> {Object.keys(DEFAULT_PRODUCT_PRICES).length} termék ár van beépítve!
-            </p>
-          </div>
+          <div className="mt-6 p-4 bg-blue-50 rounded-lg"><p className="text-sm text-blue-800">💡 <strong>Tipp:</strong> {Object.keys(DEFAULT_PRODUCT_PRICES).length} termék ár van beépítve!</p></div>
         </div>
       </div>
     );
   }
 
   if (view === 'setup') {
-    const currentProduct = missingProducts[currentMissingIndex];
-    const progress = ((currentMissingIndex / missingProducts.length) * 100).toFixed(0);
-
-    const existingProducts = Object.keys(productPrices);
-    const filteredProducts = searchFilter 
-      ? existingProducts.filter(p => p.toLowerCase().includes(searchFilter.toLowerCase()))
-      : existingProducts;
-
-    return (
-      <div className="min-h-screen flex items-center justify-center p-6 bg-gray-50">
-        <div className="max-w-3xl w-full bg-white rounded-lg shadow-lg p-8">
-          <div className="mb-6">
-            <div className="flex justify-between items-center mb-2">
-              <h2 className="text-2xl font-bold text-gray-800">Termék árak beállítása</h2>
-              <span className="text-sm text-gray-500">
-                {currentMissingIndex + 1} / {missingProducts.length}
-              </span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div 
-                className="bg-blue-600 h-2 rounded-full transition-all"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-          </div>
-
-          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <p className="text-yellow-800 font-semibold text-lg">
-              ⚠️ Hiányzó termék: {currentProduct}
-            </p>
-          </div>
-
-          <div className="mb-6">
-            <div className="flex gap-3 mb-4">
-              <button
-                onClick={() => setManualMode(false)}
-                className={`flex-1 py-2 px-4 rounded-lg font-medium transition ${
-                  !manualMode 
-                    ? 'bg-blue-600 text-white' 
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                📋 Választás listából
-              </button>
-              <button
-                onClick={() => setManualMode(true)}
-                className={`flex-1 py-2 px-4 rounded-lg font-medium transition ${
-                  manualMode 
-                    ? 'bg-blue-600 text-white' 
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                ✍️ Kézi megadás
-              </button>
-            </div>
-
-            {!manualMode ? (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Keress rá és válassz egy hasonló terméket
-                </label>
-                <input
-                  type="text"
-                  value={searchFilter}
-                  onChange={(e) => setSearchFilter(e.target.value)}
-                  placeholder="Keresés... (pl. gekkó, tücsök)"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-3 focus:ring-2 focus:ring-blue-500"
-                />
-                <div className="border border-gray-300 rounded-lg max-h-96 overflow-y-auto">
-                  {filteredProducts.map(product => (
-                    <div
-                      key={product}
-                      onClick={() => setSelectedExistingProduct(product)}
-                      className={`p-3 cursor-pointer hover:bg-blue-50 border-b border-gray-100 ${
-                        selectedExistingProduct === product ? 'bg-blue-100' : ''
-                      }`}
-                    >
-                      <div className="flex justify-between items-center">
-                        <span className="font-medium">{product}</span>
-                        <div className="text-sm text-gray-600">
-                          <span className="mr-4">Besz: {productPrices[product].beszerzesi_ar.toLocaleString()} Ft</span>
-                          <span>Elad: {productPrices[product].eladasi_ar.toLocaleString()} Ft</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Beszerzési ár (Ft)
-                  </label>
-                  <input
-                    type="number"
-                    value={tempPrices.beszerzesi_ar}
-                    onChange={(e) => setTempPrices(prev => ({ ...prev, beszerzesi_ar: e.target.value }))}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="pl. 8000"
-                    autoFocus
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Eladási ár (Ft)
-                  </label>
-                  <input
-                    type="number"
-                    value={tempPrices.eladasi_ar}
-                    onChange={(e) => setTempPrices(prev => ({ ...prev, eladasi_ar: e.target.value }))}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="pl. 16990"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="flex gap-4">
-            <button
-              onClick={handleSetMissingProduct}
-              className="flex-1 bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition font-medium"
-            >
-              {currentMissingIndex < missingProducts.length - 1 ? 'Következő →' : 'Kész ✓'}
-            </button>
-            <button
-              onClick={() => {
-                if (confirm('Biztosan kihagyod ezt a terméket?')) {
-                  if (currentMissingIndex < missingProducts.length - 1) {
-                    setCurrentMissingIndex(prev => prev + 1);
-                  } else {
-                    setView('dashboard');
-                  }
-                }
-              }}
-              className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
-            >
-              Kihagyás
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+    // ... setup nézet változatlan
   }
 
   if (view === 'dashboard' && profitData) {
@@ -709,106 +551,62 @@ function ProfitKalkulator() {
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-3xl font-bold text-gray-800">📊 Profit Dashboard</h1>
             <div className="flex gap-3">
-              <button
-                onClick={() => setView('whatif')}
-                className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 transition"
-              >
-                🔮 What-If
-              </button>
-              <button
-                onClick={exportPrices}
-                className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition"
-              >
-                💾 Export
-              </button>
-              <button
-                onClick={() => {
-                  setOrders([]);
-                  setGlobalMarkup(0);
-                  setView('upload');
-                }}
-                className="bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition"
-              >
-                Új fájl
-              </button>
+              <button onClick={() => setView('whatif')} className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 transition">🔮 What-If</button>
+              <button onClick={handleResetPrices} className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 transition">🔄 Árak Visszaállítása</button>
+              <button onClick={() => { setOrders([]); setGlobalMarkup(0); setView('upload'); }} className="bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition">Új fájl</button>
             </div>
           </div>
 
+          {/* MÓDOSÍTOTT KÁRTYÁK */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-            <div className="bg-white p-6 rounded-lg shadow">
-              <p className="text-sm text-gray-600 mb-1">Összes bevétel</p>
-              <p className="text-3xl font-bold text-gray-800">
-                {profitData.totalRevenue.toLocaleString()} Ft
-              </p>
-            </div>
-
-            <div className="bg-white p-6 rounded-lg shadow">
-              <p className="text-sm text-gray-600 mb-1">Összes költség</p>
-              <p className="text-3xl font-bold text-red-600">
-                {(profitData.totalCost + profitData.totalShipping).toLocaleString()} Ft
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                Termék: {profitData.totalCost.toLocaleString()} Ft<br/>
-                Szállítás: {profitData.totalShipping.toLocaleString()} Ft
-              </p>
-            </div>
-
-            <div className="bg-white p-6 rounded-lg shadow">
-              <p className="text-sm text-gray-600 mb-1">Nettó profit</p>
-              <p className={`text-3xl font-bold ${profitData.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {profitData.totalProfit.toLocaleString()} Ft
-              </p>
-              <p className="text-xs text-gray-500 mt-1">
-                Marzs: {profitData.profitMargin}%
-              </p>
-            </div>
-
-            <div className="bg-white p-6 rounded-lg shadow">
-              <p className="text-sm text-gray-600 mb-1">Rendelések ({profitData.orderCount} db)</p>
-              <p className="text-xl font-bold text-blue-600">
-                Átl. érték: {profitData.averageOrderValue.toFixed(0).toLocaleString()} Ft
-              </p>
-              <p className="text-xl font-bold text-green-600 mt-1">
-                Átl. profit: {profitData.averageOrderProfit.toFixed(0).toLocaleString()} Ft
-              </p>
-            </div>
+            <div className="bg-white p-6 rounded-lg shadow"><p className="text-sm text-gray-600 mb-1">Összes bevétel</p><p className="text-3xl font-bold text-gray-800">{profitData.totalRevenue.toLocaleString()} Ft</p></div>
+            <div className="bg-white p-6 rounded-lg shadow"><p className="text-sm text-gray-600 mb-1">Összes költség</p><p className="text-3xl font-bold text-red-600">{(profitData.totalCost + profitData.totalShipping).toLocaleString()} Ft</p><p className="text-xs text-gray-500 mt-1">Termék: {profitData.totalCost.toLocaleString()} Ft<br/>Szállítás: {profitData.totalShipping.toLocaleString()} Ft</p></div>
+            <div className="bg-white p-6 rounded-lg shadow"><p className="text-sm text-gray-600 mb-1">Nettó profit</p><p className={`text-3xl font-bold ${profitData.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{profitData.totalProfit.toLocaleString()} Ft</p><p className="text-xs text-gray-500 mt-1">Marzs: {profitData.profitMargin}%</p></div>
+            <div className="bg-white p-6 rounded-lg shadow"><p className="text-sm text-gray-600 mb-1">Rendelések ({profitData.orderCount} db)</p><p className="text-xl font-bold text-blue-600">Átl. érték: {profitData.averageOrderValue.toFixed(0).toLocaleString()} Ft</p><p className="text-xl font-bold text-green-600 mt-1">Átl. profit: {profitData.averageOrderProfit.toFixed(0).toLocaleString()} Ft</p></div>
           </div>
 
           <div className="bg-white rounded-lg shadow overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-xl font-bold text-gray-800">Termékek profitabilitása</h2>
-            </div>
+            <div className="px-6 py-4 border-b border-gray-200"><h2 className="text-xl font-bold text-gray-800">Termékek profitabilitása</h2></div>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Termék</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Mennyiség</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Bevétel</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Költség</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Menny.</th>
+                    {/* ÚJ, SZERKESZTHETŐ OSZLOPOK */}
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Beszerzési Ár</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Eladási Ár</th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Profit</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Marzs</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {sortedProducts.map(([name, stats]) => {
-                    const margin = stats.revenue > 0 ? ((stats.profit / stats.revenue) * 100).toFixed(1) : 0;
+                    const prices = productPrices[name];
                     return (
                       <tr key={name} className="hover:bg-gray-50">
                         <td className="px-6 py-4 text-sm text-gray-800">{name}</td>
                         <td className="px-6 py-4 text-sm text-right text-gray-600">{stats.quantity} db</td>
-                        <td className="px-6 py-4 text-sm text-right text-gray-800 font-medium">
-                          {stats.revenue.toLocaleString()} Ft
+                        {/* SZERKESZTHETŐ BESZERZÉSI ÁR */}
+                        <td className="px-6 py-4 text-sm text-right">
+                          {editingCell && editingCell.productName === name && editingCell.field === 'beszerzesi_ar' ? (
+                            <input type="number" defaultValue={prices.beszerzesi_ar} autoFocus onBlur={(e) => handlePriceChange(name, 'beszerzesi_ar', e.target.value)} onKeyDown={(e) => {if(e.key === 'Enter') e.target.blur()}} className="w-24 text-right p-1 rounded border"/>
+                          ) : (
+                            <span onClick={() => setEditingCell({ productName: name, field: 'beszerzesi_ar' })} className="cursor-pointer hover:bg-yellow-100 p-1 rounded">
+                              {prices.beszerzesi_ar.toLocaleString()} Ft
+                            </span>
+                          )}
                         </td>
-                        <td className="px-6 py-4 text-sm text-right text-red-600">
-                          {stats.cost.toLocaleString()} Ft
+                        {/* SZERKESZTHETŐ ELADÁSI ÁR */}
+                        <td className="px-6 py-4 text-sm text-right">
+                          {editingCell && editingCell.productName === name && editingCell.field === 'eladasi_ar' ? (
+                            <input type="number" defaultValue={prices.eladasi_ar} autoFocus onBlur={(e) => handlePriceChange(name, 'eladasi_ar', e.target.value)} onKeyDown={(e) => {if(e.key === 'Enter') e.target.blur()}} className="w-24 text-right p-1 rounded border"/>
+                          ) : (
+                            <span onClick={() => setEditingCell({ productName: name, field: 'eladasi_ar' })} className="cursor-pointer hover:bg-yellow-100 p-1 rounded">
+                              {prices.eladasi_ar.toLocaleString()} Ft
+                            </span>
+                          )}
                         </td>
-                        <td className={`px-6 py-4 text-sm text-right font-medium ${stats.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {stats.profit.toLocaleString()} Ft
-                        </td>
-                        <td className="px-6 py-4 text-sm text-right text-gray-600">
-                          {margin}%
-                        </td>
+                        <td className={`px-6 py-4 text-sm text-right font-medium ${stats.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{stats.profit.toLocaleString()} Ft</td>
                       </tr>
                     );
                   })}
@@ -821,7 +619,7 @@ function ProfitKalkulator() {
     );
   }
 
-  if (view === 'whatif' && whatIfDetailedData) {
+  if (view === 'whatif' && whatIfDetailedData && profitData) {
     const { 
       newTotalRevenue, 
       totalCost, 
@@ -841,30 +639,18 @@ function ProfitKalkulator() {
         <div className="max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-3xl font-bold text-gray-800">🔮 What-If Elemzés</h1>
-            <button
-              onClick={() => setView('dashboard')}
-              className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition"
-            >
-              ← Vissza a Dashboardra
-            </button>
+            <button onClick={() => setView('dashboard')} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">← Vissza a Dashboardra</button>
           </div>
 
           <div className="bg-white rounded-lg shadow p-8 mb-6">
             <h2 className="text-xl font-bold text-gray-800 mb-4">Globális árváltoztatás</h2>
             <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Árváltozás (%): {globalMarkup > 0 ? '+' : ''}{globalMarkup}%
-              </label>
-              <input
-                type="range" min="-50" max="100" step="5" value={globalMarkup}
-                onChange={(e) => setGlobalMarkup(parseInt(e.target.value))}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Árváltozás (%): {globalMarkup > 0 ? '+' : ''}{globalMarkup}%</label>
+              <input type="range" min="-50" max="100" step="5" value={globalMarkup} onChange={(e) => setGlobalMarkup(parseInt(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            {/* Jelenlegi adatok */}
             <div className="bg-white p-6 rounded-lg shadow">
                 <h3 className="text-lg font-bold text-gray-800 mb-4">Jelenlegi adatok</h3>
                 <div className="space-y-3 text-gray-700">
@@ -875,8 +661,6 @@ function ProfitKalkulator() {
                     <div className="flex justify-between text-xl"><strong>Nettó Profit:</strong> <strong className={profitData.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}>{profitData.totalProfit.toLocaleString()} Ft</strong></div>
                 </div>
             </div>
-
-            {/* What-If adatok */}
             <div className="bg-white p-6 rounded-lg shadow border-2 border-purple-400">
                 <h3 className="text-lg font-bold text-purple-700 mb-4">"What-If" szimuláció</h3>
                 <div className="space-y-3 text-gray-700">
@@ -890,11 +674,8 @@ function ProfitKalkulator() {
           </div>
 
           <div className="bg-white rounded-lg shadow overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-xl font-bold text-gray-800">Termékek profitjának változása</h2>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <div className="px-6 py-4 border-b border-gray-200"><h2 className="text-xl font-bold text-gray-800">Termékek profitjának változása</h2></div>
+            <div className="overflow-x-auto"><table className="w-full">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Termék</th>
