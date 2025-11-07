@@ -301,6 +301,7 @@ function ProfitKalkulator() {
         itemName: row['Item Name'],
         quantity: row['Quantity (- Refund)'] || 0,
         itemCost: row['Item Cost'] || 0,
+        orderSubtotal: row['Order Subtotal Amount'] || 0, // ÚJ: Részösszeg beolvasása
         orderDate: row['Order Date']
       })).filter(order => order.itemName && order.itemName !== '');
 
@@ -366,21 +367,17 @@ function ProfitKalkulator() {
 
     const priceData = { ...productPrices };
     
-    if (globalMarkup !== 0) {
-      Object.keys(priceData).forEach(key => {
-        priceData[key] = {
-          ...priceData[key],
-          eladasi_ar: Math.round(priceData[key].eladasi_ar * (1 + globalMarkup / 100))
-        };
-      });
-    }
-    
+    // Csoportosítás rendelési szám alapján
     const orderGroups = {};
     orders.forEach(order => {
       if (!orderGroups[order.orderNumber]) {
-        orderGroups[order.orderNumber] = [];
+        // Minden rendeléshez csak egyszer vesszük a részösszeget
+        orderGroups[order.orderNumber] = {
+            items: [],
+            subtotal: order.orderSubtotal 
+        };
       }
-      orderGroups[order.orderNumber].push(order);
+      orderGroups[order.orderNumber].items.push(order);
     });
 
     let totalRevenue = 0;
@@ -388,13 +385,13 @@ function ProfitKalkulator() {
     const productStats = {};
     
     // === SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ (MÓDOSÍTVA) ===
-    let totalShipping = 0;
-    Object.values(orderGroups).forEach(orderItems => {
-        const orderTotalValue = orderItems.reduce((sum, item) => sum + (item.itemCost * item.quantity), 0);
-        if (orderTotalValue < 14000) {
-            totalShipping += (2500 - 1490); // Vevő fizet, a mi költségünk csökken
+    let totalShippingCost = 0;
+    Object.values(orderGroups).forEach(group => {
+        // A csoportosított rendelés részösszegét használjuk
+        if (group.subtotal < 14000) {
+            totalShippingCost += (2500 - 1490);
         } else {
-            totalShipping += 2500; // Ingyenes szállítás, a mi költségünk a teljes összeg
+            totalShippingCost += 2500;
         }
     });
     // === SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ VÉGE ===
@@ -424,70 +421,66 @@ function ProfitKalkulator() {
       productStats[order.itemName].profit += revenue - cost;
     });
 
-    const totalProfit = totalRevenue - totalCost - totalShipping;
+    const totalProfit = totalRevenue - totalCost - totalShippingCost;
 
     return {
       totalRevenue,
       totalCost,
-      totalShipping,
+      totalShipping: totalShippingCost, // Javítva
       totalProfit,
       orderCount: Object.keys(orderGroups).length,
       productStats,
-      profitMargin: ((totalProfit / totalRevenue) * 100).toFixed(2)
+      profitMargin: totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(2) : 0
     };
-  }, [orders, productPrices, globalMarkup]);
+  }, [orders, productPrices]); // globalMarkup eltávolítva, mert a what-if kezeli
 
   const whatIfProfitData = useMemo(() => {
     if (orders.length === 0 || globalMarkup === 0) return null;
-
-    const priceData = { ...productPrices };
-    Object.keys(priceData).forEach(key => {
-      priceData[key] = {
-        ...priceData[key],
-        eladasi_ar: Math.round(priceData[key].eladasi_ar * (1 + globalMarkup / 100))
-      };
-    });
-
-    let totalRevenue = 0;
-    let totalCost = 0;
-
+    
+    // Csoportosítás rendelési szám alapján
     const orderGroups = {};
     orders.forEach(order => {
-      if (!orderGroups[order.orderNumber]) {
-        orderGroups[order.orderNumber] = [];
-      }
-      orderGroups[order.orderNumber].push(order);
+        if (!orderGroups[order.orderNumber]) {
+            orderGroups[order.orderNumber] = { items: [] };
+        }
+        orderGroups[order.orderNumber].items.push(order);
     });
-    
+
+    let newTotalRevenue = 0;
+    let totalCost = 0;
+    let newTotalShippingCost = 0;
+
     // === WHAT-IF SZÁLLÍTÁSI KÖLTSÉG KALKULÁCIÓ (MÓDOSÍTVA) ===
-    let totalShipping = 0;
-    Object.values(orderGroups).forEach(orderItems => {
-        const orderTotalValue = orderItems.reduce((sum, item) => {
-            const prices = priceData[item.itemName];
-            if (!prices) return sum;
-            // A "what-if" árral számolunk az értékhatárhoz
-            const newPrice = Math.round(productPrices[item.itemName].eladasi_ar * (1 + globalMarkup / 100));
+    Object.values(orderGroups).forEach(group => {
+        // Minden tétel árát újraszámoljuk a markup alapján
+        const newOrderSubtotal = group.items.reduce((sum, item) => {
+            const originalPrices = productPrices[item.itemName];
+            if (!originalPrices) return sum; // Ha nincs ár, nem számoljuk
+            
+            // Az eredeti eladási árból számolunk, nem a kedvezményesből
+            const newPrice = Math.round(originalPrices.eladasi_ar * (1 + globalMarkup / 100));
             return sum + (newPrice * item.quantity);
         }, 0);
 
-        if (orderTotalValue < 14000) {
-            totalShipping += (2500 - 1490);
+        if (newOrderSubtotal < 14000) {
+            newTotalShippingCost += (2500 - 1490);
         } else {
-            totalShipping += 2500;
+            newTotalShippingCost += 2500;
         }
     });
     // === WHAT-IF SZÁLLÍTÁSI KÖLTSÉG VÉGE ===
 
     orders.forEach(order => {
-        const prices = priceData[order.itemName];
+        const prices = productPrices[order.itemName];
         if (!prices) return;
   
-        const newPrice = Math.round(productPrices[order.itemName].eladasi_ar * (1 + globalMarkup / 100));
-        totalRevenue += newPrice * order.quantity;
+        // Az új bevételt az eredeti eladási árból számoljuk, hogy a kuponok ne zavarjanak be
+        const newRevenue = Math.round(prices.eladasi_ar * (1 + globalMarkup / 100)) * order.quantity;
+        newTotalRevenue += newRevenue;
         totalCost += prices.beszerzesi_ar * order.quantity;
-      });
+    });
 
-    return totalRevenue - totalCost - totalShipping;
+    return newTotalRevenue - totalCost - newTotalShippingCost;
   }, [orders, productPrices, globalMarkup]);
 
   if (view === 'upload') {
@@ -768,7 +761,7 @@ function ProfitKalkulator() {
                 {profitData.orderCount} db
               </p>
               <p className="text-xs text-gray-500 mt-1">
-                Átlag: {(profitData.totalProfit / profitData.orderCount).toLocaleString()} Ft/rendelés
+                Átlag: {profitData.orderCount > 0 ? (profitData.totalProfit / profitData.orderCount).toFixed(0).toLocaleString() : 0} Ft/rendelés
               </p>
             </div>
           </div>
@@ -906,7 +899,7 @@ function ProfitKalkulator() {
                   {(whatIfProfitData - currentProfit) >= 0 ? '+' : ''}{(whatIfProfitData - currentProfit).toLocaleString()} Ft
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  {currentProfit !== 0 ? (((whatIfProfitData - currentProfit) / currentProfit) * 100).toFixed(1) : 'N/A'}%
+                  {currentProfit !== 0 ? (((whatIfProfitData - currentProfit) / Math.abs(currentProfit)) * 100).toFixed(1) : 'N/A'}%
                 </p>
               </div>
             </div>
