@@ -2,8 +2,8 @@ const { useState, useEffect, useMemo } = React;
 
 // --- 1. ADATBÁZIS ÉS SEGÉDFÜGGVÉNYEK ---
 
-// TELJES termék árlista (Hardcoded)
 const DEFAULT_PRODUCT_PRICES = {
+  // ... (A korábbi lista maradhat itt, vagy üresen hagyható, a kód összefésüli)
   "Albino tramper (Nőstény)": { beszerzesi_ar: 8000, eladasi_ar: 16990 },
   "Super hypo (Nőstény)": { beszerzesi_ar: 8000, eladasi_ar: 15990 },
   "Albino (Nőstény)": { beszerzesi_ar: 8000, eladasi_ar: 16990 },
@@ -248,21 +248,17 @@ const formatMoney = (amount) => {
 function ProfitKalkulator() {
     const [orders, setOrders] = useState([]);
     
-    // Az árak inicializálása: Beégetett lista + LocalStorage-ben lévő mentett árak
+    // Az árak inicializálása: Beégetett lista + LocalStorage
     const [productPrices, setProductPrices] = useState(() => {
         const saved = localStorage.getItem('v3ProductPrices');
         const savedPrices = saved ? JSON.parse(saved) : {};
-        // Összefésüljük a hardcoded listát a mentett egyedi árakkal
         return { ...DEFAULT_PRODUCT_PRICES, ...savedPrices };
     });
     
     const [view, setView] = useState('upload'); 
-    const [editedPrices, setEditedPrices] = useState({}); // Ideiglenes tároló a hiányzó termékek szerkesztéséhez
+    const [editedPrices, setEditedPrices] = useState({}); 
 
-    // Mentés LocalStorage-ba (csak azokat mentjük, amik nincsenek a defaultban vagy módosultak - de egyszerűbb mindent menteni ami új)
     useEffect(() => {
-        // Csak a különbséget mentjük el, hogy ne duplikáljuk feleslegesen a hardcoded adatot, 
-        // de az egyszerűség kedvéért most mentjük a teljes aktuális állapotot, ami felülírja az alapértelmezettet betöltéskor.
         localStorage.setItem('v3ProductPrices', JSON.stringify(productPrices));
     }, [productPrices]);
 
@@ -283,43 +279,56 @@ function ProfitKalkulator() {
                 orderNumber: row['Order Number'],
                 itemName: row['Item Name'],
                 quantity: Number(row['Quantity (- Refund)']) || 0,
+                // Itt az Item Cost az ELADÁSI ÁR (Excelből)
                 itemCost: Number(row['Item Cost']) || 0,
                 orderSubtotal: Number(row['Order Subtotal Amount']) || 0,
+                orderShipping: Number(row['Order Shipping Amount']) || 0,
+                orderTax: Number(row['Order Total Tax Amount']) || 0,
+                orderTotal: Number(row['Order Total Amount']) || 0,
+                cartDiscount: Number(row['Cart Discount Amount']) || 0,
                 orderDate: row['Order Date']
             })).filter(order => order.itemName);
 
             setOrders(processedOrders);
 
-            // 1. Termékek ellenőrzése
-            const missingItemsDict = {}; // Csak az újak
+            // 1. Ismeretlen termékek keresése
+            const missingItemsDict = {}; 
             
             processedOrders.forEach(order => {
                 const name = order.itemName.trim();
-                
-                // Megnézzük, van-e egyezés a meglévő adatbázisban (fuzzy kereséssel)
                 const matchedName = findMatchingProduct(name, productPrices);
                 
-                if (matchedName) {
-                    // Ha találtunk egyezést, szuper, használjuk a meglévő árat.
-                    // (Opcionális: itt frissíthetnénk az eladási árat az excel alapján, de most hagyjuk a hardcodedot érvényesülni)
-                } else {
+                if (!matchedName) {
                     // Ha NINCS egyezés, akkor ez egy új termék!
-                    const detectedPrice = order.quantity === 1 ? order.itemCost : (order.itemCost / order.quantity);
+                    // Egységár becslése (az Item Cost itt a sor összege, vagy egységár? WooCommerce-ben általában Item Cost = Unit Price, de ha több van belőle, ellenőrizzük)
+                    // Az Excel "Item Cost" mezője általában az egységárat jelenti (kedvezmények nélkül vagy azzal).
+                    const detectedPrice = order.quantity > 0 ? (order.itemCost / order.quantity) : order.itemCost;
+                    
+                    // Valójában a WooCommerce exportban az 'Item Cost' gyakran a sor végösszege.
+                    // De ha az Item Cost 1 db-ra vonatkozik, akkor jó. A biztonság kedvéért:
+                    // Ha 1 db van, akkor Item Cost = Ár.
+                    // Az előző elemzés alapján az Item Cost az adott sor összege volt (pl. 240 Ft 1 db-nál).
+                    // De ha quantity > 1, akkor osszuk el? Nem biztos.
+                    // A felhasználó azt mondta: "az eladási ár már látszódik ott".
+                    // Használjuk az Item Cost-ot mint egységár, de figyeljük a Quantity-t.
+                    // Ha Quantity 2 és Item Cost 480, akkor egységár 240.
+                    // De a snippetben 1 db volt és Item Cost megegyezett az árral.
+                    // Feltételezzük: Item Cost = Line Total (Sorösszeg). Ezért osztunk.
+                    
+                    const unitPrice = order.quantity > 0 ? (order.itemCost / order.quantity) : 0;
 
                     if (!missingItemsDict[name]) {
                         missingItemsDict[name] = { maxPrice: 0 };
                     }
-                    if (detectedPrice > missingItemsDict[name].maxPrice) {
-                        missingItemsDict[name].maxPrice = detectedPrice;
+                    if (unitPrice > missingItemsDict[name].maxPrice) {
+                        missingItemsDict[name].maxPrice = unitPrice;
                     }
                 }
             });
 
-            // 2. Ha vannak hiányzó termékek, irány a szerkesztő
+            // 2. Szerkesztő indítása a hiányzókra
             const newMissingProductsState = {};
             Object.keys(missingItemsDict).forEach(name => {
-                // Megnézzük, hogy korábban már hozzáadtuk-e (pl. előző munkamenetben, de valamiért nem mentődött)
-                // Itt most csak a ténylegesen ismeretleneket rakjuk be
                  newMissingProductsState[name] = {
                     beszerzesi_ar: 0,
                     eladasi_ar: Math.round(missingItemsDict[name].maxPrice)
@@ -328,7 +337,7 @@ function ProfitKalkulator() {
 
             if (Object.keys(newMissingProductsState).length > 0) {
                 setEditedPrices(newMissingProductsState);
-                setView('missing_price_editor'); // Speciális nézet csak a hiányzóknak
+                setView('missing_price_editor'); 
             } else {
                 setView('dashboard');
             }
@@ -337,11 +346,7 @@ function ProfitKalkulator() {
     };
 
     const handleSaveMissingPrices = () => {
-        // Hozzáadjuk az újakat a meglévőkhöz
-        setProductPrices(prev => ({
-            ...prev,
-            ...editedPrices
-        }));
+        setProductPrices(prev => ({ ...prev, ...editedPrices }));
         setView('dashboard');
     };
 
@@ -352,42 +357,68 @@ function ProfitKalkulator() {
         }));
     };
     
-    // Profit kalkuláció (UseMemo)
+    // Profit kalkuláció (UseMemo) - ITT VAN A TRÜKK AZ UTÁNVÉTTEL!
     const profitData = useMemo(() => {
         if (orders.length === 0) return null;
 
         let totalRevenue = 0;
         let totalCost = 0;
         let totalShippingCost = 0;
+        let totalExtraRevenue = 0; // Ez lesz az utánvét/egyéb díj
+        
         const productStats = {};
+        
+        // 1. Rendelések szintjén: Rejtett díjak (Custom Amounts) keresése
         const orderGroups = {};
-
-        // Szállítási költség logika
         orders.forEach(order => {
             if (!orderGroups[order.orderNumber]) {
-                orderGroups[order.orderNumber] = { subtotal: order.orderSubtotal };
+                orderGroups[order.orderNumber] = { 
+                    subtotal: order.orderSubtotal,
+                    shipping: order.orderShipping,
+                    tax: order.orderTax,
+                    total: order.orderTotal,
+                    discount: order.cartDiscount
+                };
             }
         });
+
         Object.values(orderGroups).forEach(group => {
+            // Szállítási költség logika (nekünk mennyibe kerül a futár)
             if (group.subtotal < 14000) totalShippingCost += (2500 - 1490);
             else totalShippingCost += 2500;
+
+            // REJTETT DÍJ DETEKTÁLÁSA
+            // Képlet: Végösszeg - (Termékek + Szállítás + Adó - Kedvezmény)
+            // Ha marad valami pluszban, az az "Egyéb díj" (pl. Utánvét, Custom Amount)
+            const expectedTotal = group.subtotal + group.shipping + group.tax - group.discount;
+            const diff = group.total - expectedTotal;
+            
+            // Ha a különbség pozitív (és nagyobb mint 1 Ft kerekítési hiba), akkor az extra bevétel!
+            if (diff > 10) { 
+                totalExtraRevenue += diff;
+            }
         });
 
+        // 2. Tételek feldolgozása
         orders.forEach(order => {
             const name = order.itemName.trim();
-            // Itt is fuzzy keresést kell használni, mert az Excel név nem biztos, hogy pont egyezik a kulccsal
             const matchedName = findMatchingProduct(name, productPrices);
             
-            if (!matchedName) return; // Elvileg ilyenkor már nincs, mert kezeltük
+            if (!matchedName) return; 
 
             const prices = productPrices[matchedName];
-            const revenue = prices.eladasi_ar * order.quantity;
+            
+            // BEVÉTEL: Az Excelből jön (Item Cost oszlop), mert az a valós eladási ár
+            // De ha több van egy sorban, akkor az Item Cost a sorösszeg, így csak hozzáadjuk.
+            const revenue = order.itemCost; 
+            
+            // KÖLTSÉG: A mi adatbázisunkból jön (Beszerzési ár * mennyiség)
             const cost = prices.beszerzesi_ar * order.quantity;
 
             totalRevenue += revenue;
             totalCost += cost;
 
-            if (!productStats[matchedName]) { // A normalizált/megtalált nevet használjuk kulcsként
+            if (!productStats[matchedName]) { 
                 productStats[matchedName] = { quantity: 0, revenue: 0, cost: 0, profit: 0 };
             }
             productStats[matchedName].quantity += order.quantity;
@@ -396,10 +427,15 @@ function ProfitKalkulator() {
             productStats[matchedName].profit += (revenue - cost);
         });
 
+        // Hozzáadjuk az extra bevételeket (Utánvét) az összes bevételhez
+        totalRevenue += totalExtraRevenue;
+        // Az extra bevételnek (Utánvét díj) 0 a költsége, így tisztán profit
+
         return {
             totalRevenue,
             totalCost,
             totalShippingCost,
+            totalExtraRevenue, // Külön is visszaadjuk, hogy megjeleníthessük
             totalProfit: totalRevenue - totalCost - totalShippingCost,
             productStats,
             orderCount: Object.keys(orderGroups).length
@@ -413,7 +449,7 @@ function ProfitKalkulator() {
             <div className="min-h-screen flex items-center justify-center p-6 bg-gray-100">
                 <div className="max-w-xl w-full bg-white rounded-xl shadow-2xl p-8">
                     <h1 className="text-3xl font-bold text-gray-800 mb-2 text-center">Profit Kalkulátor</h1>
-                    <p className="text-gray-500 text-center mb-8">Hardcoded adatbázis + Hiányzó termékek kezelése</p>
+                    <p className="text-gray-500 text-center mb-8">Hardcoded adatbázis + Utánvét/Egyéb díj felismerés</p>
                     
                     <label className="block w-full cursor-pointer">
                         <div className="border-2 border-dashed border-blue-300 bg-blue-50 rounded-xl p-10 text-center hover:bg-blue-100 transition duration-300">
@@ -481,8 +517,11 @@ function ProfitKalkulator() {
 
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                            <p className="text-sm text-gray-500 uppercase font-bold tracking-wider">Bevétel</p>
+                            <p className="text-sm text-gray-500 uppercase font-bold tracking-wider">Összes Bevétel</p>
                             <p className="text-3xl font-bold text-gray-800 mt-2">{formatMoney(profitData.totalRevenue)}</p>
+                            {profitData.totalExtraRevenue > 0 && (
+                                <p className="text-xs text-green-600 mt-1">Ebből Utánvét/Egyéb: {formatMoney(profitData.totalExtraRevenue)}</p>
+                            )}
                         </div>
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
                             <p className="text-sm text-gray-500 uppercase font-bold tracking-wider">Összköltség</p>
@@ -504,14 +543,25 @@ function ProfitKalkulator() {
                             <table className="w-full">
                                 <thead className="bg-gray-50 text-xs text-gray-500 uppercase font-medium">
                                     <tr>
-                                        <th className="px-6 py-3 text-left">Termék (DB: Ismert)</th>
+                                        <th className="px-6 py-3 text-left">Termék / Tétel</th>
                                         <th className="px-6 py-3 text-right">Menny.</th>
-                                        <th className="px-6 py-3 text-right">Bevétel</th>
-                                        <th className="px-6 py-3 text-right">Költség</th>
+                                        <th className="px-6 py-3 text-right">Bevétel (Excel)</th>
+                                        <th className="px-6 py-3 text-right">Költség (Saját)</th>
                                         <th className="px-6 py-3 text-right">Profit</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100">
+                                    {/* Utánvét sor */}
+                                    {profitData.totalExtraRevenue > 0 && (
+                                        <tr className="bg-green-50 font-semibold">
+                                            <td className="px-6 py-4 text-sm text-green-800">➕ Egyéb Díjak / Utánvét</td>
+                                            <td className="px-6 py-4 text-sm text-right text-gray-600">-</td>
+                                            <td className="px-6 py-4 text-sm text-right text-green-700">{formatMoney(profitData.totalExtraRevenue)}</td>
+                                            <td className="px-6 py-4 text-sm text-right text-gray-600">{formatMoney(0)}</td>
+                                            <td className="px-6 py-4 text-sm text-right text-green-600">{formatMoney(profitData.totalExtraRevenue)}</td>
+                                        </tr>
+                                    )}
+                                    {/* Termékek */}
                                     {sortedStats.map(([name, stats]) => (
                                         <tr key={name} className="hover:bg-gray-50 transition">
                                             <td className="px-6 py-4 text-sm font-medium text-gray-800">{name}</td>
